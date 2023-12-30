@@ -1,113 +1,138 @@
-<!-- PdfViewer.vue -->
 <template>
-    <div id="viewerContainer">
-        <div id="viewer" class="pdfViewer"></div>
+    <div id="pdfvuer">
+        <div id="buttons" class="ui grey three item inverted bottom fixed menu transition hidden">
+            <a class="item" @click="page > 1 ? page-- : 1">
+                <i class="left chevron icon"></i>
+                Back
+            </a>
+            <a class="ui active item">
+                {{ page }} / {{ numPages ? numPages : '∞' }}
+            </a>
+            <a class="item" @click="page < numPages ? page++ : 1">
+                Forward
+                <i class="right chevron icon"></i>
+            </a>
+        </div>
+        <div id="buttons" class="ui grey three item inverted bottom fixed menu transition hidden">
+            <a class="item" @click="scale -= scale > 0.2 ? 0.1 : 0">
+                <i class="left chevron icon" />
+                Zoom -
+            </a>
+            <a class="ui active item">
+                {{ formattedZoom }} %
+            </a>
+            <a class="item" @click="scale += scale < 2 ? 0.1 : 0">
+                Zoom +
+                <i class="right chevron icon" />
+            </a>
+        </div>
+        <pdf :src="pdfdata" v-for="i in numPages" :key="i" :id="i" :page="i" v-model:scale="scale"
+            style="width:100%;margin:20px auto;" :annotation="true" :resize="true" @link-clicked="handle_pdf_link">
+            <template v-slot:loading>
+                loading content here...
+            </template>
+        </pdf>
     </div>
 </template>
 
 <script>
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf'; 
-import * as pdfjsWorker from 'pdfjs-dist/legacy/build/pdf.worker';
-import * as pdfjsViewer from 'pdfjs-dist/legacy/web/pdf_viewer';
-
-const CMAP_URL = "pdfjs-dist/cmaps/";
-const CMAP_PACKED = true;
-const SANDBOX_BUNDLE_SRC = new URL(
-    "pdfjs-dist/build/pdf.sandbox.mjs",
-    window.location
-);
-const ENABLE_XFA = true;
-const SEARCH_FOR = ""; // try "Mozilla";
-
+import pdfvuer from 'pdfvuer'
+import $ from 'jquery'
 
 export default {
-    name: "PdfViewer",
-    data(){
+    components: {
+        pdf: pdfvuer
+    },
+    data() {
         return {
-            pdfLoaded: false,
             page: 1,
+            numPages: 0,
+            pdfdata: undefined,
+            errors: [],
+            scale: 'page-width',
             pdfUrl: this.$route.query.pdfUrl,
         }
     },
-
+    computed: {
+        formattedZoom() {
+            return Number.parseInt(this.scale * 100);
+        },
+    },
     mounted() {
-        // 初始化PDF.js
-        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-        this.loadPdf(this.pdfUrl);
+        this.getPdf()
+    },
+    watch: {
+        show: function (s) {
+            if (s) {
+                this.getPdf();
+            }
+        },
+        page: function (p) {
+            if (window.pageYOffset <= this.findPos(document.getElementById(p)) || (document.getElementById(p + 1) && window.pageYOffset >= this.findPos(document.getElementById(p + 1)))) {
+                // window.scrollTo(0,this.findPos(document.getElementById(p)));
+                document.getElementById(p).scrollIntoView();
+            }
+        }
     },
     methods: {
-        async loadPdf(pdfUrl) {
-            // Load the PDF using PDF.js
-            const container = document.getElementById("viewerContainer");
-            const eventBus = new pdfjsViewer.EventBus();
-            const pdfLinkService = new pdfjsViewer.PDFLinkService({
-                eventBus,
-            });
-            const pdfFindController = new pdfjsViewer.PDFFindController({
-                eventBus,
-                linkService: pdfLinkService,
-            });
-            const pdfScriptingManager = new pdfjsViewer.PDFScriptingManager({
-                eventBus,
-                sandboxBundleSrc: SANDBOX_BUNDLE_SRC,
-            });
-            const pdfViewer = new pdfjsViewer.PDFViewer({
-                container,
-                eventBus,
-                linkService: pdfLinkService,
-                findController: pdfFindController,
-                scriptingManager: pdfScriptingManager,
-            });
-            pdfViewer.textLayerMode = 1;
-            pdfLinkService.setViewer(pdfViewer);
-            pdfScriptingManager.setViewer(pdfViewer);
+        handle_pdf_link: function (params) {
+            // Scroll to the appropriate place on our page - the Y component of
+            // params.destArray * (div height / ???), from the bottom of the page div
+            var page = document.getElementById(String(params.pageNumber));
+            page.scrollIntoView();
+        },
+        getPdf() {
+            var self = this;
+            self.pdfdata = pdfvuer.createLoadingTask(this.pdfUrl);
+            self.pdfdata.then(pdf => {
+                self.numPages = pdf.numPages;
+                window.onscroll = function () {
+                    changePage()
+                    stickyNav()
+                }
 
-            eventBus.on("pagesinit", function () {
-                // We can use pdfViewer now, e.g. let's change default scale.
-                pdfViewer.currentScaleValue = "page-width";
+                // Get the offset position of the navbar
+                var sticky = $('#buttons')[0].offsetTop
 
-                // We can try searching for things.
-                if (SEARCH_FOR) {
-                    eventBus.dispatch("find", { type: "", query: SEARCH_FOR });
+                // Add the sticky class to the self.$refs.nav when you reach its scroll position. Remove "sticky" when you leave the scroll position
+                function stickyNav() {
+                    if (window.scrollY >= sticky) {
+                        $('#buttons')[0].classList.remove("hidden")
+                    } else {
+                        $('#buttons')[0].classList.add("hidden")
+                    }
+                }
+
+                function changePage() {
+                    var i = 1, count = Number(pdf.numPages);
+                    do {
+                        if (window.scrollY >= self.findPos(document.getElementById(i)) &&
+                            window.scrollY <= self.findPos(document.getElementById(i + 1))) {
+                            self.page = i
+                        }
+                        i++
+                    } while (i < count)
+                    if (window.scrollY >= self.findPos(document.getElementById(i))) {
+                        self.page = i
+                    }
                 }
             });
-
-            // Loading document.
-            const loadingTask = pdfjsLib.getDocument({
-                url: pdfUrl,
-                cMapUrl: CMAP_URL,
-                cMapPacked: CMAP_PACKED,
-                enableXfa: ENABLE_XFA,
-            });
-
-            const pdfDocument = await loadingTask.promise;
-            // Document loaded, specifying document for the viewer and
-            // the (optional) linkService.
-            pdfViewer.setDocument(pdfDocument);
-
-            pdfLinkService.setDocument(pdfDocument, null);
         },
-        readPdf() {
-            // Read the PDF using browser's built-in TTS
-            const utterance = new SpeechSynthesisUtterance();
-            utterance.text = "Reading PDF content";
-            speechSynthesis.speak(utterance);
-        },
-    },
-};
+        findPos(obj) {
+            return obj.offsetTop;
+        }
+    }
+}
 </script>
-
-<style>
-body {
-    background-color: #808080;
-    margin: 0;
-    padding: 0;
+<style src="pdfvuer/dist/pdfvuer.css"></style>
+<style lang="css" scoped>
+#buttons {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
 }
 
-#viewerContainer {
-    overflow: auto;
-    position: absolute;
-    width: 100%;
-    height: 100%;
+/* Page content */
+.content {
+    padding: 16px;
 }
 </style>
