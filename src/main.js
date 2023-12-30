@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { createApp } from 'vue';
+import 'semantic-ui-css/semantic.min.css'
 import App from './App.vue';
 
 const router = createRouter({
