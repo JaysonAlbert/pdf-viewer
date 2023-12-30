@@ -26,7 +26,7 @@
                 <i class="right chevron icon" />
             </a>
         </div>
-        <pdf :src="pdfdata" v-for="i in numPages" :key="i" :id="i" :page="i" v-model:scale="scale"
+        <pdf :src="pdfdata" v-for="i in loadedPages" :key="i" :id="i" :page="i" v-model:scale="scale"
             style="width:100%;margin:20px auto;" :annotation="true" :resize="true" @link-clicked="handle_pdf_link">
             <template v-slot:loading>
                 loading content here...
@@ -47,10 +47,12 @@ export default {
         return {
             page: 1,
             numPages: 0,
+            loadedPages: 0,
             pdfdata: undefined,
             errors: [],
             scale: 'page-width',
             pdfUrl: this.$route.query.pdfUrl,
+            preloadSize: 10,
         }
     },
     computed: {
@@ -68,11 +70,13 @@ export default {
             }
         },
         page: function (p) {
-            if (window.pageYOffset <= this.findPos(document.getElementById(p)) || (document.getElementById(p + 1) && window.pageYOffset >= this.findPos(document.getElementById(p + 1)))) {
-                // window.scrollTo(0,this.findPos(document.getElementById(p)));
-                document.getElementById(p).scrollIntoView();
+                if (window.scrollY <= this.findPos(document.getElementById(p)) || (document.getElementById(p + 1) && window.scrollY >= this.findPos(document.getElementById(p + 1)))) {
+                    // window.scrollTo(0,this.findPos(document.getElementById(p)));
+                    document.getElementById(p).scrollIntoView();
+                }
+                this.loadedPages = Math.max(this.loadedPages, Math.min(p + this.preloadSize, this.numPages));
+                console.log('loadedPages: ' + this.loadedPages)
             }
-        }
     },
     methods: {
         handle_pdf_link: function (params) {
@@ -85,6 +89,7 @@ export default {
             var self = this;
             self.pdfdata = pdfvuer.createLoadingTask(this.pdfUrl);
             self.pdfdata.then(pdf => {
+                self.loadedPages = Math.min(self.preloadSize, pdf.numPages);
                 self.numPages = pdf.numPages;
                 window.onscroll = function () {
                     changePage()
@@ -104,7 +109,7 @@ export default {
                 }
 
                 function changePage() {
-                    var i = 1, count = Number(pdf.numPages);
+                    var i = 1, count = Number(self.loadedPages);
                     do {
                         if (window.scrollY >= self.findPos(document.getElementById(i)) &&
                             window.scrollY <= self.findPos(document.getElementById(i + 1))) {
