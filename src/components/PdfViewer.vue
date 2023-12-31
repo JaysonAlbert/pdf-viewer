@@ -26,7 +26,7 @@
                 <i class="right chevron icon" />
             </a>
         </div>
-        <audio-play :text="text"></audio-play>
+        <audio-play style="width: 50px"></audio-play>
         <pdf :src="pdfdata" v-for="i in loadedPages" :key="i" :id="i" :page="i" v-model:scale="scale"
             style="width:100%;margin:20px auto;" :annotation="true" :resize="true" @link-clicked="handle_pdf_link">
             <template v-slot:loading>
@@ -56,7 +56,6 @@ export default {
             scale: 'page-width',
             pdfUrl: this.$route.query.pdfUrl,
             preloadSize: 10,
-            text: ''
         }
     },
     computed: {
