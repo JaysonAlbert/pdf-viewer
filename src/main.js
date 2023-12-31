@@ -15,6 +15,10 @@ const router = createRouter({
             component: () => import('./components/PdfViewer.vue')
         },
         {
+            path: '/play',
+            component: () => import('./components/AudioPlay.vue')
+        },
+        {
             path: '/:catchAll(.*)', // Catch-all route
             redirect: '/' // Redirect to '/'
         }
