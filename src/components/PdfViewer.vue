@@ -26,6 +26,7 @@
                 <i class="right chevron icon" />
             </a>
         </div>
+        <audio-play :text="text"></audio-play>
         <pdf :src="pdfdata" v-for="i in loadedPages" :key="i" :id="i" :page="i" v-model:scale="scale"
             style="width:100%;margin:20px auto;" :annotation="true" :resize="true" @link-clicked="handle_pdf_link">
             <template v-slot:loading>
@@ -38,10 +39,12 @@
 <script>
 import pdfvuer from 'pdfvuer'
 import $ from 'jquery'
+import AudioPlay from './AudioPlay.vue'
 
 export default {
     components: {
-        pdf: pdfvuer
+        pdf: pdfvuer,
+        AudioPlay
     },
     data() {
         return {
@@ -53,6 +56,7 @@ export default {
             scale: 'page-width',
             pdfUrl: this.$route.query.pdfUrl,
             preloadSize: 10,
+            text: ''
         }
     },
     computed: {
@@ -70,13 +74,12 @@ export default {
             }
         },
         page: function (p) {
-                if (window.scrollY <= this.findPos(document.getElementById(p)) || (document.getElementById(p + 1) && window.scrollY >= this.findPos(document.getElementById(p + 1)))) {
-                    // window.scrollTo(0,this.findPos(document.getElementById(p)));
-                    document.getElementById(p).scrollIntoView();
-                }
-                this.loadedPages = Math.max(this.loadedPages, Math.min(p + this.preloadSize, this.numPages));
-                console.log('loadedPages: ' + this.loadedPages)
+            if (window.scrollY <= this.findPos(document.getElementById(p)) || (document.getElementById(p + 1) && window.scrollY >= this.findPos(document.getElementById(p + 1)))) {
+                // window.scrollTo(0,this.findPos(document.getElementById(p)));
+                document.getElementById(p).scrollIntoView();
             }
+            this.loadedPages = Math.max(this.loadedPages, Math.min(p + this.preloadSize, this.numPages));
+        }
     },
     methods: {
         handle_pdf_link: function (params) {
@@ -85,43 +88,57 @@ export default {
             var page = document.getElementById(String(params.pageNumber));
             page.scrollIntoView();
         },
-        getPdf() {
+        async getPdf() {
             var self = this;
             self.pdfdata = pdfvuer.createLoadingTask(this.pdfUrl);
-            self.pdfdata.then(pdf => {
-                self.loadedPages = Math.min(self.preloadSize, pdf.numPages);
-                self.numPages = pdf.numPages;
-                window.onscroll = function () {
-                    changePage()
-                    stickyNav()
+
+            const pdf = await self.pdfdata;
+
+            self.loadedPages = Math.min(self.preloadSize, pdf.numPages);
+            self.numPages = pdf.numPages;
+
+            this.text = ''
+            let extractedText = '';
+            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                const page = await pdf.getPage(pageNum);
+                const textContent = await page.getTextContent();
+                textContent.items.forEach(item => {
+                    extractedText += item.str;
+                });
+            }
+
+            this.text = extractedText;
+
+            window.onscroll = function () {
+                changePage()
+                stickyNav()
+            }
+
+            // Get the offset position of the navbar
+            var sticky = $('#buttons')[0].offsetTop
+
+            // Add the sticky class to the self.$refs.nav when you reach its scroll position. Remove "sticky" when you leave the scroll position
+            function stickyNav() {
+                if (window.scrollY >= sticky) {
+                    $('#buttons')[0].classList.remove("hidden")
+                } else {
+                    $('#buttons')[0].classList.add("hidden")
                 }
+            }
 
-                // Get the offset position of the navbar
-                var sticky = $('#buttons')[0].offsetTop
-
-                // Add the sticky class to the self.$refs.nav when you reach its scroll position. Remove "sticky" when you leave the scroll position
-                function stickyNav() {
-                    if (window.scrollY >= sticky) {
-                        $('#buttons')[0].classList.remove("hidden")
-                    } else {
-                        $('#buttons')[0].classList.add("hidden")
-                    }
-                }
-
-                function changePage() {
-                    var i = 1, count = Number(self.loadedPages);
-                    do {
-                        if (window.scrollY >= self.findPos(document.getElementById(i)) &&
-                            window.scrollY <= self.findPos(document.getElementById(i + 1))) {
-                            self.page = i
-                        }
-                        i++
-                    } while (i < count)
-                    if (window.scrollY >= self.findPos(document.getElementById(i))) {
+            function changePage() {
+                var i = 1, count = Number(self.loadedPages);
+                do {
+                    if (window.scrollY >= self.findPos(document.getElementById(i)) &&
+                        window.scrollY <= self.findPos(document.getElementById(i + 1))) {
                         self.page = i
                     }
+                    i++
+                } while (i < count)
+                if (window.scrollY >= self.findPos(document.getElementById(i))) {
+                    self.page = i
                 }
-            });
+            }
         },
         findPos(obj) {
             return obj.offsetTop;

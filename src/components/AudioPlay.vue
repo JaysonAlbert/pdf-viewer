@@ -1,26 +1,41 @@
 <template>
-    <div style="position: absolute; top: 33%; left: 50%; transform: translate(-50%, -50%);">
-        <textarea v-model="text" @blur="prepareAudioQueue" style="width: 90%; height: 200px;"></textarea>
-        <div>
-            <audio ref="audioPlayer" controls></audio>
-        </div>
+    <div>
+        <button @click="playNextSentence"></button>
     </div>
 </template>
 
 <script>
 export default {
+    props: {
+        text: {
+            type: String,
+            required: true,
+        },
+        preloadLength: {
+            type: Number,
+            default: 3,
+        }
+
+    },
     data() {
         return {
-            text: "today is a good day. tomorrow is a good day. yesterday was a good day. i am gona traval the world. wish me good luck. goodbye.",
             sentences: [],
             audioQueue: [],
             speaker_id: "Claribel Dervla",
             style_wav: "",
             language_id: "en",
-            preloadLength: 3,
             leastWordCount: 50,
             mergeSentences: false,
+            maxRetires: 3,
         };
+    },
+    watch: {
+        text() {
+            if (this.currentAudio) {
+                this.currentAudio.pause();
+            }
+            this.prepareAudioQueue();
+        },
     },
     methods: {
         prepareAudioQueue() {
@@ -28,7 +43,6 @@ export default {
             this.sentences = this.mergeShortSentences(this.rawSentences);
             console.log('共拆分成了' + this.sentences.length + '个句子')
             this.audioQueue = this.sentences.splice(0, this.preloadLength).map(sentence => this.loadAudio(sentence));
-            this.playNextSentence();
         },
         mergeShortSentences(sentences) {
             if (!this.mergeSentences) {
@@ -57,35 +71,49 @@ export default {
 
             return mergedSentences;
         },
-        loadAudio(sentence) {
+        loadAudio(sentence, retryCount = 0) {
             const audio = new Audio(this.createAudioUrl(sentence));
             console.log('loading audio: ' + sentence)
             audio.isReadyToPlay = false;
             audio.addEventListener('canplaythrough', () => {
                 audio.isReadyToPlay = true;
-                if(this.currentAudio == audio) {
+                if (this.currentAudio == audio) {
                     this.playCurrentAudio();
                 }
             });
+
+            const errorHandler = () => {
+                if (retryCount < this.maxRetries) {
+                    console.log(`Retry loading audio: ${sentence}, attempt ${retryCount + 1}`);
+                    const newAudio = this.loadAudio(sentence, retryCount + 1);
+                    // 用newAudio替换audioQueue中的audio
+                    const index = this.audioQueue.indexOf(audio);
+                    this.audioQueue.splice(index, 1, newAudio);
+                } else {
+                    console.error('Failed to load audio after retries: ' + sentence);
+                }
+            };
+
+            audio.addEventListener('error', errorHandler);
             audio.addEventListener('ended', this.playNextSentence); // 添加播放结束事件监听器
             audio.load();
             return audio;
         },
         createAudioUrl(sentence) {
-            return `/api/tts?text=${encodeURIComponent(sentence)}&speaker_id=${encodeURIComponent(this.speaker_id)}&style_wav=${encodeURIComponent(this.style_wav)}&language_id=${encodeURIComponent(this.language_id)}`;
+            return `http://10.60.114.123:5002/api/tts?text=${encodeURIComponent(sentence)}&speaker_id=${encodeURIComponent(this.speaker_id)}&style_wav=${encodeURIComponent(this.style_wav)}&language_id=${encodeURIComponent(this.language_id)}`;
         },
         loadNextAudio() {
             if (this.audioQueue.length > 0) {
-                this.currentAudio = this.audioQueue.shift();
-                if(this.currentAudio.isReadyToPlay) {
+                if (this.audioQueue[0].isReadyToPlay) {
+                    this.currentAudio = this.audioQueue.shift();
                     this.playCurrentAudio();
                 }
             }
         },
         playCurrentAudio() {
             console.log('playing next audio: ' + this.extractTextFromUrl(this.currentAudio.src));
-
             this.currentAudio.play();
+            this.addSentenceToQueue();
         },
         extractTextFromUrl(url) {
             return decodeURIComponent(url.split('text=')[1].split('&')[0]);
@@ -93,7 +121,6 @@ export default {
         playNextSentence() {
             console.log('playing next sentence')
             this.loadNextAudio();
-            this.addSentenceToQueue();
         },
         addSentenceToQueue() {
             if (this.sentences.length > 0) {
