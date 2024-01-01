@@ -1,6 +1,5 @@
 <template>
     <div>
-        <button @click="playNextSentence"></button>
     </div>
 </template>
 
@@ -137,9 +136,14 @@ export default {
 
         seek(span) {
             //找到这个span所在的句子index
-            const index = this.sentences.findIndex(sentence => sentence.spans.includes(span));
+            let index = this.sentences.findIndex(sentence => sentence.spans.includes(span));
             if (index == -1) {
                 return
+            }
+
+            if (this.sentences[index + 1].spans.includes(span)) {
+                //如果这个span是下一个句子的第一个span，则直接播放下一个句子
+                index = index + 1;
             }
 
             if (this.currentAudio) {
