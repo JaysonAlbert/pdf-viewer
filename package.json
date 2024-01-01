@@ -14,7 +14,9 @@
     "pdfvuer": "^2.0.1",
     "semantic-ui-css": "^2.5.0",
     "vue": "^3.4.1",
-    "vue-router": "^4.2.5"
+    "vue-router": "^4.2.5",
+    "wink-eng-lite-web-model": "^1.5.2",
+    "wink-nlp": "^1.14.3"
   },
   "devDependencies": {
     "@babel/core": "^7.12.16",

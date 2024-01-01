@@ -5,6 +5,11 @@
 </template>
 
 <script>
+const winkNLP = require('wink-nlp');
+
+const model = require('wink-eng-lite-web-model');
+const nlp = winkNLP(model);
+
 export default {
     props: {
         preloadLength: {
@@ -20,7 +25,7 @@ export default {
             style_wav: "",
             language_id: "en",
             leastWordCount: 50,
-            mergeSentences: false,
+            mergeSentences: true,
             maxRetires: 3,
             playSelector: 'span',
             currentIndex: null,
@@ -29,54 +34,67 @@ export default {
             playTimer: null,
             currentAudio: null,
             highLights: [],
+            initialized: false,
         };
     },
     mounted() {
         this.playTimer = setInterval(() => {
             this.updateSentencesAndSpans()
-        }, 5000)
+        }, 1000)
     },
     methods: {
         updateSentencesAndSpans() {
             const spanElements = document.querySelectorAll(this.playSelector);
-            if (spanElements.length == this.playLength) {
+            if (!this.initialized) {
+                //没有初始化前，等待直到2次获取到的span数量一致
+                if (spanElements.length != this.playLength) {
+                    this.playLength = spanElements.length;
+                    return
+                }
+                this.initialize(spanElements);
+                this.initialized = true;
+            } else if (spanElements.length != this.playLength) {
+                //如果span数量发生了变化，重新初始化
+                this.initialized = false;
+                this.playLength = spanElements.length;
                 return
             }
-            this.playLength = spanElements.length;
-
-            if (this.sentences.length == 0) {
-                this.sentences = this.createSentenceSpans(spanElements);
-                console.log('共拆分成了' + this.sentences.length + '个句子')
-                if (!this.currentIndex) {
-                    this.currentIndex = 0
-                    this.audioQueue = this.sentences.slice(0, this.preloadLength).map(sentence => this.loadAudio(sentence));
-                }
-            } else {
-                const lastSpan = this.sentences[this.sentences.length - 1]?.spans[0];
-                this.sentences.pop(); //去掉最后一个不完整的句子
-                const newSentences = this.createSentenceSpans(spanElements, lastSpan);
-                this.sentences = this.sentences.concat(newSentences);
-                console.log('新增了' + newSentences.length + '个句子')
-            }
-
         },
 
-        seek(span) {
-            //找到this.sentences中第一个span的y坐标大于等于span的y坐标的句子所在的index
-            const index = this.sentences.findIndex(sentence => sentence.spans[0].getBoundingClientRect().y >= span.getBoundingClientRect().y)
-            if (index == -1) {
-                return
+        initialize(spanElements) {
+            this.sentences = this.createSentenceSpans(spanElements);
+            console.log('共拆分成了' + this.sentences.length + '个句子')
+            if (!this.currentIndex) {
+                this.currentIndex = 0
+                this.audioQueue = this.sentences.slice(0, this.preloadLength).map(sentence => this.loadAudio(sentence));
+            }
+        },
+
+        processSpanText(text) {
+            // 如果text只包含一个数字，则返回空
+            if (text.replace(' ', '').match(/^\d+$/)) {
+                return ''
             }
 
-            if (this.currentAudio) {
-                this.currentAudio.audio.pause()
+            const titleLine = this.extractTitleText(text)
+            if (titleLine) {
+                return titleLine;
             }
 
-            this.currentIndex = index
-            this.audioQueue = this.sentences.slice(index, index + this.preloadLength).map(sentence => this.loadAudio(sentence));
-            this.audioQueue[0].audio.addEventListener('canplaythrough', () => {
-                this.loadNextAudio()
-            })
+            if (text.endsWith('-')) {
+                return text.slice(0, -1)
+            } else {
+                return text + ' '
+            }
+        },
+
+        extractTitleText(line) {
+            if (line.split(/[\s-]+/).length <= 3) {
+                return line + '. '
+            }
+            const titlePattern = /^\d+(\.\d+)*\.\s+(.+)$/;
+            const match = line.match(titlePattern);
+            return match ? match[2] + '. ' : null;
         },
 
         createSentenceSpans(spanElements, lastSpan = null) {
@@ -96,11 +114,13 @@ export default {
 
             spanElements.forEach(span => {
                 const start = fullText.length;
-                const spanText = span.textContent;
+                let spanText = this.processSpanText(span.textContent);
                 fullText += spanText;
                 const end = fullText.length;
                 spanRanges.push({ span, start, end });
             });
+
+            console.log(fullText)
 
             const sentences = this.splitIntoSentences(fullText);
 
@@ -115,17 +135,30 @@ export default {
             });
         },
 
-        splitIntoSentences(text) {
-            const rawSentences = text.match(/[^.!?]+[.!?]+/g) || [];
-            if (!this.mergeSentences) {
-                return rawSentences;
+        seek(span) {
+            //找到这个span所在的句子index
+            const index = this.sentences.findIndex(sentence => sentence.spans.includes(span));
+            if (index == -1) {
+                return
             }
-            return this.mergeShortSentences(rawSentences);
+
+            if (this.currentAudio) {
+                this.currentAudio.audio.pause()
+            }
+
+            this.currentIndex = index
+            this.audioQueue = this.sentences.slice(index, index + this.preloadLength).map(sentence => this.loadAudio(sentence));
+            this.audioQueue[0].audio.addEventListener('canplaythrough', () => {
+                this.loadNextAudio()
+            })
+        },
+
+
+        splitIntoSentences(text) {
+            const doc = nlp.readDoc(text);
+            return doc.sentences().out();
         },
         mergeShortSentences(sentences) {
-            if (!this.mergeSentences) {
-                return sentences;
-            }
             const mergedSentences = [];
             let currentSentence = '';
 
@@ -153,10 +186,10 @@ export default {
             const { text, spans } = sentence;
             const audio = new Audio(this.createAudioUrl(text));
             console.log('loading audio: ' + text)
-            const audioSpans = { audio, spans }
+            const audioSpans = { text, audio, spans }
 
             audio.isReadyToPlay = false;
-            audio.addEventListener('canplaythrough', () => {
+            audio.addEventListener('loadeddata', () => {
                 audio.isReadyToPlay = true;
                 if (this.currentAudio == audioSpans) {
                     this.playCurrentAudio();
@@ -194,7 +227,13 @@ export default {
             return audioSpans;
         },
         createAudioUrl(sentence) {
-            return `/api/tts?text=${encodeURIComponent(sentence)}&speaker_id=${encodeURIComponent(this.speaker_id)}&style_wav=${encodeURIComponent(this.style_wav)}&language_id=${encodeURIComponent(this.language_id)}`;
+            sentence = this.removeCitations(sentence).replace('..', '.');
+            return `/api/tts?text=${encodeURIComponent(sentence)}&style_wav=${encodeURIComponent(this.style_wav)}&language_id=${encodeURIComponent(this.language_id)}`;
+        },
+        removeCitations(text) {
+            // 正则表达式匹配包括多个作者和年份的引用
+            const pattern = /\([A-Za-z,\s&;]+(?:et al\.)?,\s\d{4}(?:;\s[A-Za-z,\s&]+(?:et al\.)?,\s\d{4})*\)/g;
+            return text.replace(pattern, '');
         },
         loadNextAudio() {
             if (this.audioQueue.length > 0) {
@@ -222,7 +261,7 @@ export default {
         },
         addSentenceToQueue() {
             while (this.currentIndex < this.sentences.length && this.audioQueue.length < this.preloadLength) {
-                const nextSentence = this.sentences[this.currentIndex + this.audioQueue.length + 1];
+                const nextSentence = this.sentences[this.currentIndex + this.audioQueue.length + 2];
                 const nextAudio = this.loadAudio(nextSentence);
                 this.audioQueue.push(nextAudio);
             }
