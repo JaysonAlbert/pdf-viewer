@@ -13,7 +13,7 @@ export default {
     props: {
         preloadLength: {
             type: Number,
-            default: 3,
+            default: 2,
         }
     },
     data() {
@@ -63,10 +63,6 @@ export default {
         initialize(spanElements) {
             this.sentences = this.createSentenceSpans(spanElements);
             console.log('共拆分成了' + this.sentences.length + '个句子')
-            if (!this.currentIndex) {
-                this.currentIndex = 0
-                this.audioQueue = this.sentences.slice(0, this.preloadLength).map(sentence => this.loadAudio(sentence));
-            }
         },
 
         processSpanText(text) {
@@ -88,12 +84,13 @@ export default {
         },
 
         extractTitleText(line) {
+            line = line.trim()
             if (line.split(/[\s-]+/).length <= 3) {
-                return line + '. '
+                return line + '.'
             }
             const titlePattern = /^\d+(\.\d+)*\.\s+(.+)$/;
             const match = line.match(titlePattern);
-            return match ? match[2] + '. ' : null;
+            return match ? match[2] + '.' : null;
         },
 
         createSentenceSpans(spanElements, lastSpan = null) {
@@ -118,8 +115,6 @@ export default {
                 const end = fullText.length;
                 spanRanges.push({ span, start, end });
             });
-
-            console.log(fullText)
 
             const sentences = this.splitIntoSentences(fullText);
 
@@ -146,15 +141,32 @@ export default {
                 index = index + 1;
             }
 
-            if (this.currentAudio) {
-                this.currentAudio.audio.pause()
+            if (this.currentIndex == index) {
+                //如果点击的是当前句子，则重新播放
+                if (!this.currentAudio) {
+                    return
+                }
+                if (this.currentAudio.audio.paused) {
+                    this.currentAudio.audio.play()
+                } else {
+                    this.currentAudio.audio.pause()
+                }
+                return
             }
-
             this.currentIndex = index
+
+            this.logCurrentIndex()
+
             this.audioQueue = this.sentences.slice(index, index + this.preloadLength).map(sentence => this.loadAudio(sentence));
-            this.audioQueue[0].audio.addEventListener('canplaythrough', () => {
-                this.loadNextAudio()
-            })
+            this.currentAudio = this.audioQueue.shift();
+        },
+
+        logCurrentIndex() {
+            if (!this.currentIndex || !this.sentences[this.currentIndex]) {
+                console.log('index not found: ' + this.currentIndex + ' ' + this.sentences.length)
+                return
+            }
+            console.log('currentIndex: ' + this.currentIndex + ', ' + this.sentences[this.currentIndex].text)
         },
 
 
@@ -189,19 +201,19 @@ export default {
         loadAudio(sentence, retryCount = 0) {
             const { text, spans } = sentence;
             const audio = new Audio(this.createAudioUrl(text));
-            console.log('loading audio: ' + text)
             const audioSpans = { text, audio, spans }
 
             audio.isReadyToPlay = false;
             audio.addEventListener('loadeddata', () => {
                 audio.isReadyToPlay = true;
-                if (this.currentAudio == audioSpans) {
+                if (this.currentAudio.text == audioSpans.text) {
                     this.playCurrentAudio();
                 }
             });
 
 
-            const errorHandler = () => {
+            const errorHandler = (e) => {
+                console.log('Failed to load audio: ' + text + e);
                 if (retryCount < this.maxRetries) {
                     console.log(`Retry loading audio: ${text}, attempt ${retryCount + 1}`);
                     const newAudioSpans = this.loadAudio(sentence, retryCount + 1);
@@ -209,7 +221,7 @@ export default {
                     const index = this.audioQueue.indexOf(audioSpans);
                     this.audioQueue.splice(index, 1, newAudioSpans);
                 } else {
-                    console.error('Failed to load audio after retries: ' + text);
+                    console.log('Failed to load audio after retries: ' + text);
                 }
             };
 
@@ -225,47 +237,51 @@ export default {
             audio.addEventListener('ended', () => {
                 spans.forEach(span => span.classList.remove('highlight'));
                 this.highLights = this.highLights.filter(highLight => !spans.includes(highLight))
-                this.playNextSentence();
+                this.loadNextAudio();
             });
             audio.load();
             return audioSpans;
         },
         createAudioUrl(sentence) {
             sentence = this.removeCitations(sentence).replace('..', '.');
+            console.log('tts: ' + sentence)
             return `/api/tts?text=${encodeURIComponent(sentence)}&style_wav=${encodeURIComponent(this.style_wav)}&language_id=${encodeURIComponent(this.language_id)}`;
         },
         removeCitations(text) {
             // 正则表达式匹配包括多个作者和年份的引用
-            const pattern = /\([A-Za-z,\s&;]+(?:et al\.)?,\s\d{4}(?:;\s[A-Za-z,\s&]+(?:et al\.)?,\s\d{4})*\)/g;
-            return text.replace(pattern, '');
+            const pattern = /\([^)]*\)/g;
+            return text.replace(pattern, '').trim();
         },
         loadNextAudio() {
+            if (this.currentIndex == null) {
+                console.log('not ready yet')
+                return
+            }
             if (this.audioQueue.length > 0) {
-                if (this.audioQueue[0].audio.isReadyToPlay) {
-                    this.currentAudio = this.audioQueue.shift();
+                this.currentAudio = this.audioQueue.shift();
+                this.currentIndex++;
+
+                if (this.currentAudio.audio.isReadyToPlay) {
                     this.playCurrentAudio();
                 }
             }
         },
         playCurrentAudio() {
-            console.log('playing next audio: ' + this.extractTextFromUrl(this.currentAudio.audio.src));
             this.currentAudio.audio.play();
-            this.currentIndex = this.sentences.findIndex(sentence => sentence.text == this.extractTextFromUrl(this.currentAudio.audio.src));
+            this.logCurrentIndex()
             this.addSentenceToQueue();
         },
         extractTextFromUrl(url) {
             return decodeURIComponent(url.split('text=')[1].split('&')[0]);
         },
         playNextSentence() {
-            if (this.currentIndex == null) {
-                console.log('not ready yet')
-                return
-            }
+
             this.loadNextAudio();
         },
         addSentenceToQueue() {
             while (this.currentIndex < this.sentences.length && this.audioQueue.length < this.preloadLength) {
-                const nextSentence = this.sentences[this.currentIndex + this.audioQueue.length + 2];
+                const nextSentence = this.sentences[this.currentIndex + this.audioQueue.length + 1];
+                console.log('add sentence to queue: ' + nextSentence.text)
                 const nextAudio = this.loadAudio(nextSentence);
                 this.audioQueue.push(nextAudio);
             }
